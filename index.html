@@ -125,6 +125,12 @@
 
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .modal-bg img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  .dlg-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .dlg { background: #fff; border-radius: var(--radius); box-shadow: 0 8px 40px rgba(0,0,0,.25); padding: 20px; width: 100%; max-width: 380px; }
+  .dlg-msg { font-size: 15px; line-height: 1.45; margin-bottom: 16px; }
+  .dlg .field { margin-bottom: 16px; }
+  .dlg-btns { display: flex; gap: 8px; }
+  .dlg-btns .btn { flex: 1; }
   .modal-close { position: fixed; top: calc(14px + env(safe-area-inset-top)); right: 14px; background: #fff; border: none; border-radius: 50%;
     width: 40px; height: 40px; font-size: 20px; cursor: pointer; }
   .version { text-align: center; color: var(--text-dim); font-size: 11px; margin-top: 18px; }
@@ -279,6 +285,17 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="dlg-bg hidden" id="dlgBg">
+  <div class="dlg" role="dialog" aria-modal="true">
+    <div class="dlg-msg" id="dlgMsg"></div>
+    <div class="field hidden" id="dlgField"><input id="dlgInput" autocomplete="off"></div>
+    <div class="dlg-btns">
+      <button class="btn btn-secondary" id="dlgNo">Annuler</button>
+      <button class="btn btn-primary" id="dlgYes" style="width:auto">OK</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg hidden" id="photoModal" onclick="closePhoto()">
   <button class="modal-close" onclick="closePhoto()">✕</button>
   <img id="modalImg" alt="Ticket de caisse">
@@ -287,7 +304,7 @@
 <script>
 // ── Version ──────────────────────────────────────────────────────────────────
 // ⚠️ Changer ce numéro à chaque modification du code
-var APP_VERSION = '1.9';
+var APP_VERSION = '2.0';
 
 // ── Firebase ─────────────────────────────────────────────────────────────────
 // Même projet Firebase que Suivi Parc, mais toutes les données sont rangées
@@ -342,6 +359,37 @@ function fmtDate(ts) {
   var d = new Date(ts);
   return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
+// Fenêtres de confirmation / saisie propres à l'appli : confirm() et prompt()
+// du navigateur sont bloqués dans certains navigateurs intégrés.
+// opts : { ok, danger, input, valeur }  →  appelle cb(true|false) ou cb(texte|null)
+function dialogue(msg, opts, cb) {
+  opts = opts || {};
+  var bg = $('dlgBg'), inp = $('dlgInput'), yes = $('dlgYes'), no = $('dlgNo');
+  $('dlgMsg').textContent = msg;
+  $('dlgField').classList.toggle('hidden', !opts.input);
+  inp.value = opts.valeur || '';
+  yes.textContent = opts.ok || 'OK';
+  yes.className = 'btn ' + (opts.danger ? 'btn-danger' : 'btn-primary');
+  yes.style.width = 'auto';
+  bg.classList.remove('hidden');
+  var fini = function(r) {
+    bg.classList.add('hidden');
+    yes.onclick = no.onclick = bg.onclick = inp.onkeydown = null;
+    cb(r);
+  };
+  yes.onclick = function() { fini(opts.input ? inp.value : true); };
+  no.onclick = function() { fini(opts.input ? null : false); };
+  bg.onclick = function(e) { if (e.target === bg) no.onclick(); };
+  inp.onkeydown = function(e) { if (e.key === 'Enter') yes.onclick(); };
+  if (opts.input) setTimeout(function() { inp.focus(); inp.select(); }, 50); else yes.focus();
+}
+function confirmer(msg, opts, siOui) {
+  dialogue(msg, opts, function(r) { if (r) siOui(); });
+}
+function demander(msg, valeur, siOk) {
+  dialogue(msg, { input: true, valeur: valeur }, function(r) { if (r !== null) siOk(r); });
+}
+
 var toastTimer;
 function showToast(msg, ok) {
   var t = $('toast');
@@ -686,9 +734,16 @@ function savePlein() {
   if (!km) { showToast('Indiquez le kilométrage'); $('fKm').focus(); return; }
   if (!photoData) { showToast('Prenez le ticket de caisse en photo'); return; }
   var last = lastKmFor(plaque);
-  if (last !== null && km < last &&
-      !confirm('Le kilométrage (' + fmtKm(km) + ') est inférieur au dernier relevé (' + fmtKm(last) + '). Enregistrer quand même ?')) return;
+  var envoyer = function() { envoyerPlein(lieu, plaque, carbu, carbu2, km); };
+  if (last !== null && km < last) {
+    confirmer('Le kilométrage (' + fmtKm(km) + ') est inférieur au dernier relevé (' + fmtKm(last) + '). Enregistrer quand même ?',
+      { ok: 'Enregistrer' }, envoyer);
+  } else {
+    envoyer();
+  }
+}
 
+function envoyerPlein(lieu, plaque, carbu, carbu2, km) {
   var btn = $('saveBtn');
   btn.disabled = true; btn.textContent = 'Envoi en cours…';
   var key = db.ref(ROOT + '/pleins').push().key;
@@ -772,7 +827,14 @@ function closePhoto() { $('photoModal').classList.add('hidden'); }
 
 // État comptable : le ticket a été saisi par la comptabilité
 function setSaisi(key, saisi) {
-  if (!saisi && !confirm('Remettre ce plein en « À saisir » ?')) return;
+  if (!saisi) {
+    confirmer('Remettre ce plein en « À saisir » ?', { ok: 'Remettre à saisir' }, function() { ecrireSaisi(key, false); });
+  } else {
+    ecrireSaisi(key, true);
+  }
+}
+
+function ecrireSaisi(key, saisi) {
   db.ref(ROOT + '/pleins/' + key).update(saisi
     ? { saisi: true, saisiPar: me.nom, saisiLe: Date.now() }
     : { saisi: null, saisiPar: null, saisiLe: null }
@@ -781,11 +843,12 @@ function setSaisi(key, saisi) {
 }
 
 function deletePlein(key) {
-  if (!confirm('Supprimer définitivement ce plein et la photo du ticket ?')) return;
-  var updates = {};
-  updates[ROOT + '/pleins/' + key] = null;
-  updates[ROOT + '/photos/' + key] = null;
-  db.ref().update(updates).then(function() { showToast('Plein supprimé'); });
+  confirmer('Supprimer définitivement ce plein et la photo du ticket ?', { ok: 'Supprimer', danger: true }, function() {
+    var updates = {};
+    updates[ROOT + '/pleins/' + key] = null;
+    updates[ROOT + '/photos/' + key] = null;
+    db.ref().update(updates).then(function() { showToast('Plein supprimé'); });
+  });
 }
 
 function exportCsv() {
@@ -852,11 +915,11 @@ function addUser() {
 }
 
 function resetPwd(id) {
-  var pwd = prompt('Nouveau mot de passe pour « ' + allUsers[id].nom + ' » (6 caractères minimum) :');
-  if (pwd === null) return;
-  if (pwd.length < 6) { showToast('Mot de passe trop court'); return; }
-  hashPwd(id, pwd).then(function(h) { return db.ref(ROOT + '/users/' + id + '/hash').set(h); })
-    .then(function() { showToast('Mot de passe modifié', true); });
+  demander('Nouveau mot de passe pour « ' + allUsers[id].nom + ' » (6 caractères minimum) :', '', function(pwd) {
+    if (pwd.length < 6) { showToast('Mot de passe trop court'); return; }
+    hashPwd(id, pwd).then(function(h) { return db.ref(ROOT + '/users/' + id + '/hash').set(h); })
+      .then(function() { showToast('Mot de passe modifié', true); });
+  });
 }
 
 function changeRole(id, role) {
@@ -865,10 +928,10 @@ function changeRole(id, role) {
 }
 
 function editCarte(id) {
-  var carte = prompt('Numéro de carte de « ' + allUsers[id].nom + ' » :', allUsers[id].carte || '');
-  if (carte === null) return;
-  db.ref(ROOT + '/users/' + id + '/carte').set(carte.trim())
-    .then(function() { showToast('Numéro de carte enregistré', true); });
+  demander('Numéro de carte de « ' + allUsers[id].nom + ' » :', allUsers[id].carte || '', function(carte) {
+    db.ref(ROOT + '/users/' + id + '/carte').set(carte.trim())
+      .then(function() { showToast('Numéro de carte enregistré', true); });
+  });
 }
 
 function toggleUser(id) {
@@ -876,8 +939,9 @@ function toggleUser(id) {
 }
 
 function deleteUser(id) {
-  if (!confirm('Supprimer le compte de « ' + allUsers[id].nom + ' » ? Ses pleins déjà saisis sont conservés.')) return;
-  db.ref(ROOT + '/users/' + id).remove().then(function() { showToast('Compte supprimé'); });
+  confirmer('Supprimer le compte de « ' + allUsers[id].nom + ' » ? Ses pleins déjà saisis sont conservés.', { ok: 'Supprimer', danger: true }, function() {
+    db.ref(ROOT + '/users/' + id).remove().then(function() { showToast('Compte supprimé'); });
+  });
 }
 </script>
 </body>
