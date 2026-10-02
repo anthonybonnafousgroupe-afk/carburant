@@ -231,7 +231,7 @@
           <label>Photo du ticket de caisse *</label>
           <input type="file" id="fPhoto" accept="image/*" capture="environment" class="hidden" onchange="onPhoto(this, 1)">
           <div class="photo-zone" id="photoZone" onclick="document.getElementById('fPhoto').click()">
-            <span class="big">📷</span>Prendre le ticket en photo<small>Posez le ticket à plat, bien éclairé</small>
+            <span class="big">📷</span>Prendre le ticket en photo<small>Posez le ticket à plat, bien éclairé</small><small style="margin-top:8px;color:var(--warn);font-weight:600">⚠️ Pas de ticket disponible ? Prenez en photo le pupitre de la station (écran avec le montant et les litres)</small>
           </div>
           <div class="photo-preview hidden" id="photoPreview">
             <img id="photoImg" alt="Ticket">
@@ -318,7 +318,7 @@
 <script>
 // ── Version ──────────────────────────────────────────────────────────────────
 // ⚠️ Changer ce numéro à chaque modification du code
-var APP_VERSION = '2.1';
+var APP_VERSION = '2.2';
 
 // ── Firebase ─────────────────────────────────────────────────────────────────
 // Même projet Firebase que Suivi Parc, mais toutes les données sont rangées
