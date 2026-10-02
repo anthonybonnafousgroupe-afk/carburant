@@ -88,6 +88,7 @@
   .photo-preview { position: relative; }
   .photo-preview img { width: 100%; max-height: 360px; object-fit: contain; border-radius: var(--radius); background: #222; display: block; }
   .photo-preview .btn { margin-top: 8px; width: 100%; }
+  .photo-preview .input-row .btn { width: auto; }
 
   /* Listes */
   .item { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px; margin-bottom: 10px; }
@@ -228,13 +229,26 @@
         </div>
         <div class="field">
           <label>Photo du ticket de caisse *</label>
-          <input type="file" id="fPhoto" accept="image/*" capture="environment" class="hidden" onchange="onPhoto(this)">
+          <input type="file" id="fPhoto" accept="image/*" capture="environment" class="hidden" onchange="onPhoto(this, 1)">
           <div class="photo-zone" id="photoZone" onclick="document.getElementById('fPhoto').click()">
             <span class="big">📷</span>Prendre le ticket en photo<small>Posez le ticket à plat, bien éclairé</small>
           </div>
           <div class="photo-preview hidden" id="photoPreview">
             <img id="photoImg" alt="Ticket">
             <button class="btn btn-secondary" onclick="document.getElementById('fPhoto').click()">🔄 Reprendre la photo</button>
+          </div>
+          <button type="button" class="btn btn-secondary btn-small hidden" id="addPhoto2Btn" style="margin-top:8px"
+            onclick="document.getElementById('fPhoto2').click()">➕ Ajouter une 2e photo</button>
+        </div>
+        <div class="field hidden" id="photo2Field">
+          <label>2e photo</label>
+          <input type="file" id="fPhoto2" accept="image/*" capture="environment" class="hidden" onchange="onPhoto(this, 2)">
+          <div class="photo-preview">
+            <img id="photoImg2" alt="2e photo">
+            <div class="input-row">
+              <button class="btn btn-secondary" style="flex:1" onclick="document.getElementById('fPhoto2').click()">🔄 Reprendre</button>
+              <button class="btn btn-danger" style="flex:1" onclick="retirerPhoto2()">✕ Retirer</button>
+            </div>
           </div>
         </div>
         <button class="btn btn-primary" id="saveBtn" onclick="savePlein()">✅ Enregistrer le plein</button>
@@ -304,7 +318,7 @@
 <script>
 // ── Version ──────────────────────────────────────────────────────────────────
 // ⚠️ Changer ce numéro à chaque modification du code
-var APP_VERSION = '2.0';
+var APP_VERSION = '2.1';
 
 // ── Firebase ─────────────────────────────────────────────────────────────────
 // Même projet Firebase que Suivi Parc, mais toutes les données sont rangées
@@ -340,6 +354,7 @@ var me = null;          // { id, nom, role }
 var allPleins = [];     // pleins (sans les photos)
 var allUsers = {};      // comptes (tous si droit « voirTout », sinon le sien)
 var photoData = null;   // photo compressée du ticket en cours
+var photoData2 = null;  // 2e photo facultative
 var pleinsRef = null, usersRef = null;
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
@@ -563,7 +578,7 @@ function onKmInput() {
 }
 
 // Photo : redimensionnée et compressée pour rester légère mais lisible
-function onPhoto(input) {
+function onPhoto(input, n) {
   var file = input.files && input.files[0];
   if (!file) return;
   var reader = new FileReader();
@@ -575,16 +590,32 @@ function onPhoto(input) {
       var c = document.createElement('canvas');
       c.width = w; c.height = h;
       c.getContext('2d').drawImage(img, 0, 0, w, h);
-      photoData = c.toDataURL('image/jpeg', 0.72);
-      $('photoImg').src = photoData;
-      $('photoZone').classList.add('hidden');
-      $('photoPreview').classList.remove('hidden');
+      var data = c.toDataURL('image/jpeg', 0.72);
+      if (n === 2) {
+        photoData2 = data;
+        $('photoImg2').src = data;
+        $('photo2Field').classList.remove('hidden');
+        $('addPhoto2Btn').classList.add('hidden');
+      } else {
+        photoData = data;
+        $('photoImg').src = data;
+        $('photoZone').classList.add('hidden');
+        $('photoPreview').classList.remove('hidden');
+        if (!photoData2) $('addPhoto2Btn').classList.remove('hidden');
+      }
     };
     img.onerror = function() { showToast('Image illisible, reprenez la photo'); };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
   input.value = '';
+}
+
+function retirerPhoto2() {
+  photoData2 = null;
+  $('photoImg2').removeAttribute('src');
+  $('photo2Field').classList.add('hidden');
+  $('addPhoto2Btn').classList.toggle('hidden', !photoData);
 }
 
 // 2e carburant facultatif (ex : Gazole + AdBlue au même passage)
@@ -715,6 +746,7 @@ function resetForm() {
   photoData = null;
   $('photoZone').classList.remove('hidden');
   $('photoPreview').classList.add('hidden');
+  retirerPhoto2();
 }
 
 // Toujours le numéro à jour, même s'il a été modifié pendant la session
@@ -750,9 +782,10 @@ function envoyerPlein(lieu, plaque, carbu, carbu2, km) {
   var updates = {};
   // Photo rangée à part pour que la liste des pleins reste rapide à charger
   updates[ROOT + '/photos/' + key] = photoData;
+  if (photoData2) updates[ROOT + '/photos2/' + key] = photoData2;
   updates[ROOT + '/pleins/' + key] = {
     chauffeurId: me.id, chauffeurNom: me.nom, carte: carteActuelle(), lieu: lieu, plaque: plaque, carburant: carbu, carburant2: carbu2 || null, km: km, gps: gpsPos,
-    date: Date.now(), hasPhoto: true
+    date: Date.now(), hasPhoto: true, hasPhoto2: !!photoData2
   };
   db.ref().update(updates).then(function() {
     resetForm();
@@ -806,7 +839,8 @@ function renderPleins() {
         (voirTout && p.saisi ? '<div class="saisi-info">✅ Saisi par ' + escHtml(p.saisiPar || '?') + (p.saisiLe ? ' le ' + fmtDate(p.saisiLe) : '') + '</div>' : '') +
       '</div>' +
       '<div class="item-actions">' +
-        (p.hasPhoto ? '<button class="btn btn-secondary btn-small" onclick="openPhoto(\'' + p.key + '\')">🧾 Voir le ticket</button>' : '') +
+        (p.hasPhoto ? '<button class="btn btn-secondary btn-small" onclick="openPhoto(\'' + p.key + '\', 1)">🧾 ' + (p.hasPhoto2 ? 'Photo 1' : 'Voir le ticket') + '</button>' : '') +
+        (p.hasPhoto2 ? '<button class="btn btn-secondary btn-small" onclick="openPhoto(\'' + p.key + '\', 2)">🧾 Photo 2</button>' : '') +
         (voirTout ? (p.saisi
           ? '<button class="btn btn-secondary btn-small" onclick="setSaisi(\'' + p.key + '\', false)">↩️ Remettre à saisir</button>'
           : '<button class="btn btn-ok btn-small" onclick="setSaisi(\'' + p.key + '\', true)">✅ Marquer saisi</button>') : '') +
@@ -815,10 +849,10 @@ function renderPleins() {
   }).join('') + (list.length > 300 ? '<div class="empty">300 premiers affichés — affinez les filtres</div>' : '');
 }
 
-function openPhoto(key) {
+function openPhoto(key, n) {
   $('modalImg').removeAttribute('src');
   $('photoModal').classList.remove('hidden');
-  db.ref(ROOT + '/photos/' + key).once('value').then(function(snap) {
+  db.ref(ROOT + (n === 2 ? '/photos2/' : '/photos/') + key).once('value').then(function(snap) {
     if (snap.val()) $('modalImg').src = snap.val();
     else { closePhoto(); showToast('Photo introuvable'); }
   });
@@ -843,10 +877,11 @@ function ecrireSaisi(key, saisi) {
 }
 
 function deletePlein(key) {
-  confirmer('Supprimer définitivement ce plein et la photo du ticket ?', { ok: 'Supprimer', danger: true }, function() {
+  confirmer('Supprimer définitivement ce plein et ses photos ?', { ok: 'Supprimer', danger: true }, function() {
     var updates = {};
     updates[ROOT + '/pleins/' + key] = null;
     updates[ROOT + '/photos/' + key] = null;
+    updates[ROOT + '/photos2/' + key] = null;
     db.ref().update(updates).then(function() { showToast('Plein supprimé'); });
   });
 }
