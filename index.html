@@ -102,6 +102,12 @@
   .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; background: #eee; color: #555; }
   .tag.admin { background: var(--red-light); color: var(--red); }
   .tag.carbu { background: #e8f1fb; color: #1f5fa8; }
+  .tag.saisi { background: #e3f5ea; color: var(--ok); }
+  .tag.asaisir { background: #fff4e0; color: var(--warn); }
+  .item.est-saisi { border-left: 4px solid var(--ok); }
+  .item.a-saisir { border-left: 4px solid var(--warn); }
+  .btn-ok { background: var(--ok); color: #fff; }
+  .saisi-info { font-size: 12px; color: var(--ok); font-weight: 600; }
   .tag.off { background: #fbe9d7; color: var(--warn); }
   .mono { font-family: 'JetBrains Mono', monospace; color: var(--text); font-weight: 600; }
   .empty { text-align: center; color: var(--text-dim); padding: 30px 10px; font-size: 14px; }
@@ -238,6 +244,8 @@
         <div class="field"><input id="filtPlaque" class="plate-input" placeholder="Plaque" oninput="renderPleins()"></div>
         <div class="field"><select id="filtCarbu" onchange="renderPleins()"><option value="">Tous carburants</option>
           <option value="Gazole">Gazole</option><option value="AdBlue">AdBlue</option><option value="GNR">GNR</option></select></div>
+        <div class="field full"><select id="filtEtat" onchange="renderPleins()"><option value="">Tous les états</option>
+          <option value="asaisir">🕓 À saisir</option><option value="saisi">✅ Saisis</option></select></div>
       </div>
       <div class="summary">
         <span id="pleinsCount"></span>
@@ -279,7 +287,7 @@
 <script>
 // ── Version ──────────────────────────────────────────────────────────────────
 // ⚠️ Changer ce numéro à chaque modification du code
-var APP_VERSION = '1.8';
+var APP_VERSION = '1.9';
 
 // ── Firebase ─────────────────────────────────────────────────────────────────
 // Même projet Firebase que Suivi Parc, mais toutes les données sont rangées
@@ -704,11 +712,13 @@ function savePlein() {
 // ── Liste des pleins ─────────────────────────────────────────────────────────
 function filteredPleins() {
   if (!can('voirTout')) return allPleins.filter(function(p) { return p.chauffeurId === me.id; });
-  var ch = $('filtChauffeur').value, mois = $('filtMois').value, pl = normPlaque($('filtPlaque').value), cb = $('filtCarbu').value;
+  var ch = $('filtChauffeur').value, mois = $('filtMois').value, pl = normPlaque($('filtPlaque').value), cb = $('filtCarbu').value, et = $('filtEtat').value;
   return allPleins.filter(function(p) {
     if (ch && p.chauffeurId !== ch) return false;
     if (pl && (p.plaque || '').indexOf(pl) === -1) return false;
     if (cb && p.carburant !== cb && p.carburant2 !== cb) return false;
+    if (et === 'saisi' && !p.saisi) return false;
+    if (et === 'asaisir' && p.saisi) return false;
     if (mois) {
       var d = new Date(p.date);
       var m = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
@@ -721,12 +731,16 @@ function filteredPleins() {
 function renderPleins() {
   if (!me) return;
   var list = filteredPleins(), voirTout = can('voirTout');
-  $('pleinsCount').textContent = list.length + ' plein' + (list.length > 1 ? 's' : '');
+  var nbASaisir = list.filter(function(p) { return !p.saisi; }).length;
+  $('pleinsCount').textContent = list.length + ' plein' + (list.length > 1 ? 's' : '') +
+    (voirTout ? ' — ' + nbASaisir + ' à saisir' : '');
   if (!list.length) { $('pleinsList').innerHTML = '<div class="empty">Aucun plein enregistré</div>'; return; }
   $('pleinsList').innerHTML = list.slice(0, 300).map(function(p) {
-    return '<div class="item">' +
+    return '<div class="item' + (voirTout ? (p.saisi ? ' est-saisi' : ' a-saisir') : '') + '">' +
       '<div class="item-head"><span><span class="plaque">' + escHtml(p.plaque) + '</span>' +
-        (p.carburant ? ' <span class="tag carbu">⛽ ' + escHtml(carburantsLabel(p)) + '</span>' : '') + '</span>' +
+        (p.carburant ? ' <span class="tag carbu">⛽ ' + escHtml(carburantsLabel(p)) + '</span>' : '') +
+        (voirTout ? (p.saisi ? ' <span class="tag saisi">✅ Saisi</span>' : ' <span class="tag asaisir">🕓 À saisir</span>') : '') +
+      '</span>' +
       '<span class="item-date">' + fmtDate(p.date) + '</span></div>' +
       '<div class="item-body">' +
         '<div>📍 <b>' + escHtml(p.lieu) + '</b>' +
@@ -734,9 +748,13 @@ function renderPleins() {
         '</div>' +
         '<div>🛣️ ' + fmtKm(p.km) + '</div>' +
         (voirTout ? '<div>👤 ' + escHtml(p.chauffeurNom) + (p.carte ? ' — 💳 <span class="mono">' + escHtml(p.carte) + '</span>' : '') + '</div>' : '') +
+        (voirTout && p.saisi ? '<div class="saisi-info">✅ Saisi par ' + escHtml(p.saisiPar || '?') + (p.saisiLe ? ' le ' + fmtDate(p.saisiLe) : '') + '</div>' : '') +
       '</div>' +
       '<div class="item-actions">' +
         (p.hasPhoto ? '<button class="btn btn-secondary btn-small" onclick="openPhoto(\'' + p.key + '\')">🧾 Voir le ticket</button>' : '') +
+        (voirTout ? (p.saisi
+          ? '<button class="btn btn-secondary btn-small" onclick="setSaisi(\'' + p.key + '\', false)">↩️ Remettre à saisir</button>'
+          : '<button class="btn btn-ok btn-small" onclick="setSaisi(\'' + p.key + '\', true)">✅ Marquer saisi</button>') : '') +
         (can('supprimer') ? '<button class="btn btn-danger btn-small" onclick="deletePlein(\'' + p.key + '\')">🗑️ Supprimer</button>' : '') +
       '</div></div>';
   }).join('') + (list.length > 300 ? '<div class="empty">300 premiers affichés — affinez les filtres</div>' : '');
@@ -752,6 +770,16 @@ function openPhoto(key) {
 }
 function closePhoto() { $('photoModal').classList.add('hidden'); }
 
+// État comptable : le ticket a été saisi par la comptabilité
+function setSaisi(key, saisi) {
+  if (!saisi && !confirm('Remettre ce plein en « À saisir » ?')) return;
+  db.ref(ROOT + '/pleins/' + key).update(saisi
+    ? { saisi: true, saisiPar: me.nom, saisiLe: Date.now() }
+    : { saisi: null, saisiPar: null, saisiLe: null }
+  ).then(function() { showToast(saisi ? '✅ Marqué comme saisi' : 'Remis à saisir', saisi); })
+   .catch(function(e) { showToast('Erreur : ' + e.message); });
+}
+
 function deletePlein(key) {
   if (!confirm('Supprimer définitivement ce plein et la photo du ticket ?')) return;
   var updates = {};
@@ -761,11 +789,12 @@ function deletePlein(key) {
 }
 
 function exportCsv() {
-  var rows = [['Date', 'Heure', 'Chauffeur', 'N° de carte', 'Plaque', 'Carburant', 'Lieu', 'Kilométrage', 'GPS']];
+  var rows = [['Date', 'Heure', 'Chauffeur', 'N° de carte', 'Plaque', 'Carburant', 'Lieu', 'Kilométrage', 'GPS', 'État', 'Saisi par', 'Saisi le']];
   filteredPleins().forEach(function(p) {
     var d = new Date(p.date);
     rows.push([d.toLocaleDateString('fr-FR'), d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      p.chauffeurNom, p.carte || '', p.plaque, carburantsLabel(p), p.lieu, p.km, p.gps ? p.gps.lat + ', ' + p.gps.lng : '']);
+      p.chauffeurNom, p.carte || '', p.plaque, carburantsLabel(p), p.lieu, p.km, p.gps ? p.gps.lat + ', ' + p.gps.lng : '',
+      p.saisi ? 'Saisi' : 'À saisir', p.saisiPar || '', p.saisiLe ? new Date(p.saisiLe).toLocaleDateString('fr-FR') : '']);
   });
   // Point-virgule + BOM : s'ouvre directement dans Excel français
   var csv = '﻿' + rows.map(function(r) {
